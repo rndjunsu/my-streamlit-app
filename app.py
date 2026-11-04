@@ -610,10 +610,17 @@ def process_question(question, enable_tts):
 
     answer = result.answer
 
-    # 이메일 발송 요청
-    if result.intent == "email_send":
+    # 이메일 초안과 발송 요청을 모두 작성/미리보기 상태로 전환
+    # AI가 email_draft로 분류해도 화면에 초안이 표시되어야 합니다.
+    if result.intent in ("email_draft", "email_send"):
 
         new_mail = result.email.model_dump()
+        new_mail["recipient"] = (new_mail.get("recipient") or "").strip()
+        if not new_mail.get("body"):
+            # 모델이 본문 필드를 비우고 답변에만 초안을 작성한 경우
+            new_mail["body"] = (result.answer or "").strip()
+        if not new_mail.get("subject"):
+            new_mail["subject"] = "업무 이메일 초안"
 
         old_mail = (
             st.session_state.pending_email or {}
@@ -646,25 +653,19 @@ def process_question(question, enable_tts):
 
         st.session_state.pending_email = new_mail
 
-        if valid_email(new_mail["recipient"]):
-
+        if valid_email(new_mail.get("recipient", "")):
             answer = (
-                "네! 이메일 초안을 준비했어요! 🦦 "
-                "아래 발송 승인 영역에서 "
-                "수신자와 내용을 확인해 주세요."
+                "이메일 초안을 작성했어요! 🦦 아래 HTML 미리보기에서 내용을 확인한 뒤 "
+                "원하실 때 발송 승인해 주세요."
             )
-
         else:
-
             answer = (
-                "이메일 초안을 준비했어요! "
-                "받는 분의 이메일 주소를 "
-                "알려주시면 발송 준비를 마칠게요."
+                "이메일 초안을 작성했어요! 🦦 수신자 주소가 없어도 아래에서 HTML 미리보기를 "
+                "확인하고 제목과 본문을 수정할 수 있어요. 발송할 때 수신자를 입력해 주세요."
             )
 
-    elif result.intent != "clarification":
-
-        st.session_state.pending_email = None
+    # 다른 질문을 하더라도 준비된 이메일 초안을 임의로 삭제하지 않습니다.
+    # '취소' 또는 발송 성공 시에만 pending_email을 해제합니다.
 
     # 대화 이력 저장
     st.session_state.messages.extend([
@@ -787,8 +788,9 @@ def prepare_meeting_report_data(meeting_text):
 
 def send_email(to, subject, body, report_data=None):
 
-    gmail = get_secret("GMAIL_ADDRESS")
-    password = get_secret("GMAIL_APP_PASSWORD")
+    gmail = str(get_secret("GMAIL_ADDRESS") or "").strip()
+    # Gmail 앱 비밀번호에 복사 과정에서 포함된 공백을 제거합니다.
+    password = str(get_secret("GMAIL_APP_PASSWORD") or "").replace(" ", "").strip()
 
     if not gmail or not password:
         return (
@@ -829,18 +831,20 @@ def send_email(to, subject, body, report_data=None):
         )
 
     except smtplib.SMTPAuthenticationError:
-        return (
-            False,
-            "Gmail 인증에 실패했습니다. "
-            "앱 비밀번호를 확인해 주세요."
+        return False, "Gmail 인증 실패: Gmail 주소와 2단계 인증용 앱 비밀번호를 확인하세요."
+    except smtplib.SMTPRecipientsRefused:
+        return False, "수신자 주소가 SMTP 서버에서 거부되었습니다. 이메일 주소를 확인하세요."
+    except (TimeoutError, ConnectionError, OSError) as e:
+        # Streamlit Cloud의 외부 SMTP 포트 차단/네트워크 제한도 여기서 확인할 수 있습니다.
+        return False, (
+            f"SMTP 서버 연결 실패 ({type(e).__name__}). "
+            "Streamlit 배포 환경에서 smtp.gmail.com:465 연결이 가능한지 확인하세요. "
+            "호스팅 환경이 SMTP 포트를 제한한다면 HTTPS 기반 메일 API가 필요합니다."
         )
-
+    except smtplib.SMTPException as e:
+        return False, f"Gmail SMTP 처리 실패: {type(e).__name__}. 관리자 로그를 확인하세요."
     except Exception as e:
-        return (
-            False,
-            f"메일 발송 오류: {type(e).__name__}. "
-            "앱 설정과 로그를 확인해 주세요."
-        )
+        return False, f"이메일 처리 실패: {type(e).__name__}. 관리자 로그를 확인하세요."
 
 def approved_tool_send(email):
 
@@ -1545,7 +1549,7 @@ with right:
     # 직접 이메일 작성 (기존 SMTP / 승인 로직 재사용)
     # -----------------------------------------------------
 
-    with st.expander("✉️ 직접 이메일 작성하기", expanded=False):
+    with st.expander("✉️ 직접 이메일 작성하기 · HTML 미리보기", expanded=True):
         st.caption(
             "회의록 없이도 이메일을 작성할 수 있습니다. "
             "작성 후에는 아래 승인 화면에서 최종 확인합니다."
@@ -1573,8 +1577,8 @@ with right:
             )
 
         if draft_clicked:
-            if not valid_email(manual_to.strip()):
-                st.error("올바른 수신자 이메일 주소를 입력하세요.")
+            if manual_to.strip() and not valid_email(manual_to.strip()):
+                st.error("받는 사람 주소 형식을 확인하세요. 초안 작성 시에는 비워도 됩니다.")
             elif not manual_subject.strip() or not manual_body.strip():
                 st.error("메일 제목과 본문을 입력하세요.")
             else:
@@ -1591,7 +1595,7 @@ with right:
 
     if st.session_state.pending_email:
 
-        st.markdown("#### 📧 이메일 발송 승인")
+        st.markdown("#### 📧 이메일 초안 및 HTML 미리보기")
 
         st.caption(
             "승인 버튼을 누르기 전까지 "
@@ -1635,7 +1639,7 @@ with right:
                 disabled=bool(mail.get("report_data"))
             )
 
-            approve, cancel = st.columns(2)
+            approve, preview_col, cancel = st.columns(3)
 
             with approve:
 
@@ -1645,12 +1649,29 @@ with right:
                     use_container_width=True
                 )
 
+            with preview_col:
+                refresh_clicked = st.form_submit_button(
+                    "🔄 미리보기 갱신", use_container_width=True
+                )
+
             with cancel:
 
                 cancel_clicked = st.form_submit_button(
                     "취소",
                     use_container_width=True
                 )
+
+        if refresh_clicked:
+            # form 안에서 수정한 제목/본문으로 실제 전송 HTML을 갱신
+            updated = {
+                "recipient": to.strip(),
+                "subject": subject.strip(),
+                "body": body.strip(),
+            }
+            if mail.get("report_data") is not None:
+                updated["report_data"] = mail["report_data"]
+            st.session_state.pending_email = updated
+            st.rerun()
 
         if cancel_clicked:
 
@@ -1702,8 +1723,13 @@ with right:
                     ):
 
                         try:
-                            success, message = approved_tool_send(
-                                approved
+                            # 사용자가 UI에서 승인한 값만 직접 전달합니다.
+                            # AI 도구 호출을 다시 거치면 호출 실패/인자 차이로 발송이 중단될 수 있습니다.
+                            success, message = send_email(
+                                approved["recipient"],
+                                approved["subject"],
+                                approved["body"],
+                                report_data=approved.get("report_data")
                             )
 
                             if success:

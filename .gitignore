@@ -4,4 +4,3 @@ __pycache__/
 .streamlit/secrets.toml
 api_key.txt
 meeting.txt
-*.log

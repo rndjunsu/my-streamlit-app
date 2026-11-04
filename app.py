@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# AIVLE AI Assistant v22 · UI polish + v21 features
+# AIVLE AI Assistant v23 · friendly labels + resilient progress display
 # 수정 위치 안내: ① 함수/프롬프트/스키마 ② Streamlit UI
 # API 키를 소스에 직접 작성하지 마세요.
 
@@ -725,6 +725,13 @@ html,body {font-family:'DM Sans','Noto Sans KR',sans-serif;}
 [data-testid="stImage"] img {object-fit:contain;filter:drop-shadow(0 16px 22px rgba(50,88,158,.13));max-height:220px;}
 @media(max-width:740px) {.aivle-intro h1{font-size:25px}.aivle-feature-strip{gap:1px;padding:8px}.aivle-feature-strip span{font-size:11px}}
 
+/* v23: 진행률 표시를 외부 JS chunk에 의존하지 않는 HTML/CSS로 구성 */
+.aivle-progress {background:#fff;border:1px solid #e5eaf3;border-radius:14px;padding:14px 18px;margin:12px 0 16px;}
+.aivle-progress-title {display:flex;align-items:center;gap:9px;margin-bottom:10px;color:#34435e;font-size:13px;font-weight:650;}
+.aivle-progress-title strong {margin-left:auto;color:#2d5bd0;font-size:15px;}
+.aivle-progress-title span {color:#7a879d;font-size:12px;}
+.aivle-progress-track {height:9px;background:#e9eef9;border-radius:999px;overflow:hidden;}
+.aivle-progress-fill {height:100%;background:linear-gradient(90deg,#4f83e8,#5370ce);border-radius:999px;transition:width .15s ease;}
 /* v22: 간결한 개인비서 대시보드, 명확한 클릭 영역 */
 .aivle-intro {padding:15px 0 18px;}
 .aivle-intro-tag {background:#edf5ff;color:#2d5c93;letter-spacing:.065em;margin-bottom:12px;}
@@ -934,9 +941,9 @@ with tab_chat:
                      help="AI 대화의 화면 답변 길이만 조절합니다. 회의 분석의 필수 항목은 유지합니다.")
         st.checkbox("음성 답변 자동 생성", key="enable_tts")
         if st.session_state.enable_tts:
-            st.checkbox("음성용 대본 별도 생성 (추가 토큰 사용)", key="separate_voice_answer")
+            st.checkbox("음성 답변을 자연스럽게 다듬기", key="separate_voice_answer")
             st.selectbox("음성", ["nova", "coral"], key="tts_voice")
-        st.caption("대화는 최대 최근 10쌍을 보관합니다. 세션 종료 후 영구 저장되지는 않습니다.")
+        st.caption("대화 기록은 현재 접속 중에만 유지됩니다.")
     st.markdown('<div class="aivle-hint">텍스트 또는 음성으로 질문하면 AIVLE이 답변을 생성하고 읽어드립니다.</div>', unsafe_allow_html=True)
     if not st.session_state.chat_history:
         st.info("안녕하세요! 회의 요약, 업무 정리, 이메일 초안 등 무엇이든 요청해 보세요.")
@@ -944,25 +951,25 @@ with tab_chat:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
-    with st.expander("음성 질문 · 텍스트 확인", expanded=False):
+    with st.expander("음성으로 질문하기", expanded=False):
         chat_audio = st.audio_input("질문을 녹음하세요", key="chat_microphone")
         chat_upload = st.file_uploader(
-            "녹음 파일 선택 (mp3, wav, m4a 등)", type=["mp3", "wav", "m4a", "mp4", "webm"], key="chat_upload"
+            "음성 파일 업로드", type=["mp3", "wav", "m4a", "mp4", "webm"], key="chat_upload"
         )
         selected = chat_audio or chat_upload
-        if st.button("1. Whisper-1 음성 인식", disabled=selected is None):
+        if st.button("음성 변환", disabled=selected is None):
             try:
                 with st.spinner("음성을 텍스트로 변환 중..."):
                     text, reused = transcribe(selected)
                     st.session_state.last_chat_stt = text
                     st.session_state.chat_stt_draft = text
-                st.success("STT 완료: 변환된 문장을 확인하고 필요하면 수정하세요." + (" (캐시 재사용)" if reused else ""))
+                st.success("음성 변환을 완료했습니다. 내용을 확인해 주세요." + (" (캐시 재사용)" if reused else ""))
             except Exception as exc:
                 st.error(f"STT 오류: {exc}")
         st.text_area("인식된 질문 (수정 가능)", key="chat_stt_draft", height=90)
-        if st.button("2. 확인한 질문으로 AI에게 요청", disabled=not st.session_state.chat_stt_draft.strip()):
+        if st.button("질문 보내기", disabled=not st.session_state.chat_stt_draft.strip()):
             try:
-                with st.spinner("답변과 음성을 생성 중..."):
+                with st.spinner("답변을 준비하는 중..."):
                     write_chat(st.session_state.chat_stt_draft)
                 st.rerun()
             except Exception as exc:
@@ -971,14 +978,14 @@ with tab_chat:
     typed = st.chat_input("AIVLE에게 질문하세요")
     if typed:
         try:
-            with st.spinner("답변과 TTS 생성 중..."):
+            with st.spinner("답변을 준비하는 중..."):
                 write_chat(typed)
             st.rerun()
         except Exception as exc:
             st.error(f"대화 오류: {exc}")
 
     if st.session_state.chat_tts:
-        with st.expander("🔊 음성으로 읽는 대본", expanded=False):
+        with st.expander("음성 답변 내용", expanded=False):
             st.write(st.session_state.chat_voice_text)
         st.audio(st.session_state.chat_tts, format="audio/mp3", autoplay=st.session_state.chat_audio_autoplay)
         st.session_state.chat_audio_autoplay = False
@@ -1011,9 +1018,9 @@ with tab_meeting:
     )
     if audio is not None:
         st.audio(audio)
-    if st.button("🎙️ Whisper-1 STT 변환", disabled=audio is None):
+    if st.button("음성을 텍스트로 변환", disabled=audio is None):
         try:
-            with st.spinner("Whisper-1로 변환 중..."):
+            with st.spinner("음성을 텍스트로 변환 중..."):
                 text, reused = transcribe(audio)
                 new_meeting_text(text, "audio:" + sha256(audio.getvalue()))
             st.success("텍스트 변환 완료" + (" (캐시 재사용)" if reused else ""))
@@ -1070,7 +1077,7 @@ with tab_meeting:
         st.markdown('<div class="aivle-panel"><div class="aivle-taskhead">핵심 요약</div><div style="margin-top:10px;line-height:1.85;color:#46536c">' + html.escape(data["summary"]).replace("\n", "<br>") + '</div></div>', unsafe_allow_html=True)
         with st.expander("분석 JSON 확인"):
             st.json(data)
-        if st.button("🔊 회의 요약 TTS"):
+        if st.button("회의 요약 듣기"):
             try:
                 st.session_state.meeting_tts = say(data["summary"])
             except Exception as exc:
@@ -1189,7 +1196,18 @@ with tab_tasks:
         a.metric("총 업무", len(tasks))
         b.metric("완료", done_count)
         c.metric("기한 경과 (미완료)", overdue)
-        st.progress(done_count/len(tasks), text=f"진행률 {done_count}/{len(tasks)}")
+        # 프런트엔드 동적 Progress 컴포넌트에 대한 의존을 줄이기 위한 정적 진행률 표시입니다.
+        # 이 변경만으로 브라우저 캐시/네트워크 문제를 완전히 해결할 수는 없습니다.
+        pct = round(100 * done_count / len(tasks))
+        st.markdown(
+            '<div class="aivle-progress" role="group" aria-label="업무 진행률">'
+            f'<div class="aivle-progress-title">업무 진행률 <strong>{pct}%</strong> '
+            f'<span>({done_count}/{len(tasks)}건 완료)</span></div>'
+            '<div class="aivle-progress-track" role="progressbar" '
+            f'aria-valuemin="0" aria-valuemax="100" aria-valuenow="{pct}">'
+            f'<div class="aivle-progress-fill" style="width:{pct}%"></div>'
+            '</div></div>', unsafe_allow_html=True
+        )
         order = {"높음":0, "중간":1, "낮음":2}
         filtered = st.selectbox("업무 필터", ["전체", "미완료", "완료", "마감 임박/경과"])
         display_tasks = sorted(tasks, key=lambda t:(t['completed'], order.get(t.get('priority'), 3), t.get('due_date','9999')))
@@ -1273,14 +1291,14 @@ with tab_reports:
             st.success("이메일 초안을 준비했습니다. ✉ 이메일 탭에서 내용을 확인하세요.")
             st.rerun()
         if st.session_state.work_report_usage:
-            st.caption("이번 보고서 LLM 토큰: " + str(st.session_state.work_report_usage['total']))
+            # 모델 사용량 수치는 사용자 화면에 노출하지 않습니다.
+            pass
 
 
 if st.session_state.send_log:
     with st.expander("📬 세션 이메일 발송 기록"):
         st.dataframe(st.session_state.send_log, use_container_width=True)
 st.markdown(
-    f'<div class="aivle-footer">AIVLE AI ASSISTANT · 세션 텍스트 LLM 토큰 {st.session_state.token_total:,} '
-    '· STT/TTS 별도 · 데이터는 현재 세션에서 관리됩니다.</div>',
+    '<div class="aivle-footer">AIVLE · 나만의 AI 업무 파트너 · 기록은 현재 접속 중에만 유지됩니다.</div>',
     unsafe_allow_html=True
 )

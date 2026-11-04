@@ -13,7 +13,7 @@ from aivle_core import analyze_meeting, create_html_report, general_chat, send_e
 
 st.set_page_config(page_title="AIVLE AI 개인비서", page_icon="🤖", layout="wide")
 st.title("🤖 AIVLE | AI 개인비서")
-st.caption("음성 대화 · 회의 분석 · 업무 체크리스트 · HTML 이메일 | v11")
+st.caption("음성 대화 · 회의 분석 · 업무 체크리스트 · HTML 이메일 | v12")
 # 버튼 API 호출은 시간 제한 및 제한된 재시도로 무한 대기를 방지합니다.
 
 # Colab 실행: Colab에서 api_key.txt를 읽어 os.environ에 등록한 뒤 서버를 실행합니다.
@@ -53,7 +53,8 @@ initial = {
     "stt_cache": {}, "meeting_draft": "", "meeting_source_hash": None,
     "meeting_data": None, "meeting_hash": None, "report_usage": None,
     "meeting_tts": None, "token_total": 0, "sent_hashes": set(),
-    "send_log": [], "task_checks": {}, "send_result": None
+    "send_log": [], "task_checks": {}, "send_result": None,
+    "analysis_config_hash": None
 }
 for key, value in initial.items():
     if key not in st.session_state:
@@ -113,6 +114,20 @@ def new_meeting_text(text, source_key=None):
     st.session_state.meeting_source_hash = source_key
     return True
 
+
+# 추출 설정은 코드에 숨기지 않고 사이드바에서 확인할 수 있도록 합니다.
+with st.sidebar:
+    st.subheader("회의 분석 설정")
+    st.caption("모델: gpt-4o-mini | 스키마: strict=True | JSON 도구: prepare_meeting_report")
+    sampling_mode = st.radio("샘플링 제어", ["Temperature", "Top P"], index=0)
+    if sampling_mode == "Temperature":
+        sampling_value = st.slider("Temperature", 0.0, 1.0, 0.1, 0.1)
+        sampling = {"temperature": sampling_value}
+    else:
+        sampling_value = st.slider("Top P", 0.1, 1.0, 0.9, 0.05)
+        sampling = {"top_p": sampling_value}
+    st.caption("Top K와 Min P는 현재 사용하는 OpenAI Responses API에서 직접 지정하지 않습니다.")
+    st.caption("일반 대화와 회의 분석은 같은 모델을 사용하지만 현재 도구 실행 흐름은 분리되어 있습니다.")
 
 tab_chat, tab_meeting, tab_tasks = st.tabs(["💬 AI 대화", "🎙️ 회의 분석", "✅ 업무 관리"])
 
@@ -196,7 +211,9 @@ with tab_meeting:
     st.text_area("회의록 / STT 결과 (수정 가능)", key="meeting_draft", height=230)
     content = st.session_state.meeting_draft
     current_hash = sha256(content)
-    up_to_date = st.session_state.meeting_hash == current_hash
+    config_hash = sha256(json.dumps(sampling, sort_keys=True))
+    up_to_date = (st.session_state.meeting_hash == current_hash and
+                  st.session_state.analysis_config_hash == config_hash)
     if st.button("🔍 회의 분석", type="primary"):
         if not content.strip():
             st.warning("회의록을 입력하거나 파일을 업로드해주세요.")
@@ -205,9 +222,10 @@ with tab_meeting:
         else:
             try:
                 with st.spinner("회의 분석 중..."):
-                    data, usage = analyze_meeting(content, client)
+                    data, usage = analyze_meeting(content, client, sampling=sampling)
                 st.session_state.meeting_data = data
                 st.session_state.meeting_hash = current_hash
+                st.session_state.analysis_config_hash = config_hash
                 st.session_state.report_usage = usage
                 st.session_state.meeting_tts = None
                 st.session_state.send_result = None
@@ -264,14 +282,15 @@ with tab_meeting:
         if st.session_state.report_usage:
             st.caption(f"분석 토큰 사용량: {st.session_state.report_usage}")
     elif st.session_state.meeting_data is not None:
-        st.info("회의록이 수정되었습니다. 현재 내용으로 다시 분석해야 메일을 발송할 수 있습니다.")
+        st.info("회의록이나 생성 설정이 변경되었습니다. 다시 분석해야 현재 설정으로 메일을 발송할 수 있습니다.")
 
 with tab_tasks:
     st.subheader("김 대리 담당 업무")
     data = st.session_state.meeting_data
     if data is None:
         st.info("회의 분석을 완료하면 담당 업무가 여기에 나타납니다.")
-    elif st.session_state.meeting_hash != sha256(st.session_state.meeting_draft):
+    elif (st.session_state.meeting_hash != sha256(st.session_state.meeting_draft) or
+          st.session_state.analysis_config_hash != sha256(json.dumps(sampling, sort_keys=True))):
         st.warning("회의록이 변경되었습니다. 새로 분석한 뒤 업무를 확인해주세요.")
     elif not data["tasks"]:
         st.info("추출된 담당 업무가 없습니다.")
@@ -285,6 +304,8 @@ with tab_tasks:
                 f"{task['title']} | 마감: {task['due_date']} | 우선순위: {task['priority']}",
                 key=widget_key
             )
+            st.caption(f"마감 근거: {task.get('due_date_evidence', '확인 필요')}")
+            st.caption(f"우선순위 근거: {task.get('priority_reason', '확인 필요')}")
             st.session_state.task_checks[uid] = done
         done_count = sum(st.session_state.task_checks.get(sha256(st.session_state.meeting_hash + str(i) + t["title"]), False) for i, t in enumerate(data["tasks"]))
         st.progress(done_count / len(data["tasks"]), text=f"완료 {done_count}/{len(data['tasks'])}")

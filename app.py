@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# AIVLE AI Assistant v13 · ONE FILE
+# AIVLE AI Assistant v14 · ONE FILE
 # 수정 위치 안내: ① 함수/프롬프트/스키마 ② Streamlit UI
 # API 키를 소스에 직접 작성하지 마세요.
 
@@ -391,22 +391,60 @@ def send_email(to, subject, body, sender=None, password=None):
         return {"status": "error", "message": str(exc)}
 
 
-def general_chat(user_message, recent_messages, client=None, model="gpt-4o-mini"):
+# 이메일 발송 의도는 LLM이 도구로 인식하지만, 실제 SMTP 발송은 사용자의 승인 버튼에서만 실행합니다.
+EMAIL_TOOLS = [{
+    "type": "function",
+    "name": "request_email_send",
+    "description": "사용자가 이메일 발송을 명시적으로 요청하면 메일 초안을 만들고 발송 승인을 요청합니다. 실제 이메일은 이 도구가 보내지 않습니다.",
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "to": {"type": "string"},
+            "subject": {"type": "string"},
+            "body": {"type": "string"}
+        },
+        "required": ["to", "subject", "body"],
+        "additionalProperties": False
+    }
+}]
+
+
+def general_chat(user_message, recent_messages, client=None, model="gpt-4o-mini", recipient_email=""):
+    """일반 대화 + 이메일 초안 요청 통합. 실제 발송은 사용자 승인 후에만 수행."""
     client = client or OpenAI(timeout=30.0, max_retries=1)
     history = [{"role": x["role"], "content": x["content"]} for x in recent_messages[-10:]]
     res = client.responses.create(
         model=model,
-        input=[{"role": "system", "content": SYSTEM_ROLE + "일반 대화에서는 도구 호출 없이 대답합니다."}, *history, {"role": "user", "content": user_message}]
+        input=[
+            {"role": "system", "content": SYSTEM_ROLE + """
+[메일 요청 처리]
+사용자가 이메일 발송을 명시적으로 요구한 경우에만 request_email_send 도구를 호출합니다.
+수신자 주소를 명시하지 않았으면 허용된 수신자 주소를 사용합니다.
+발송을 완료했다고 말하지 않습니다. 사용자 승인 전에는 초안만 준비합니다.
+단순한 회의 요약이나 일반 질문에는 메일 도구를 사용하지 않습니다.
+""" + f"\n허용된 이메일 수신자: {recipient_email or '확인 필요'}"},
+            *history,
+            {"role": "user", "content": user_message}
+        ],
+        tools=EMAIL_TOOLS,
+        tool_choice="auto"
     )
     usage = {"input": res.usage.input_tokens, "output": res.usage.output_tokens, "total": res.usage.total_tokens} if res.usage else None
-    return res.output_text, usage
+    calls = [item for item in res.output if item.type == "function_call" and item.name == "request_email_send"]
+    if calls:
+        draft = json.loads(calls[0].arguments)
+        if not recipient_email or draft.get("to", "").strip().lower() != recipient_email.lower():
+            return "메일 수신자 확인이 필요합니다. 설정된 본인 이메일로만 발송할 수 있습니다.", usage, None
+        return f"이메일 초안을 준비했습니다: {draft['subject']}. 📨 이메일 발송 탭에서 내용을 확인하고 승인해주세요.", usage, draft
+    return res.output_text or "응답을 생성하지 못했습니다.", usage, None
 
 
 # =======================================================
 # ② STREAMLIT 앱 화면 · 상태 관리 · 음성/이메일 워크플로
 # =======================================================
 
-"""AIVLE AI Assistant v13 · Colab에서 전체 소스를 직접 편집하는 단일 app.py."""
+"""AIVLE AI Assistant v14 · Colab에서 전체 소스를 직접 편집하는 단일 app.py."""
 import hashlib
 import hmac
 import io
@@ -421,7 +459,7 @@ from openai import OpenAI
 
 st.set_page_config(page_title="AIVLE AI 개인비서", page_icon="🤖", layout="wide")
 st.title("🤖 AIVLE | AI 개인비서")
-st.caption("음성 대화 · 회의 분석 · 업무 체크리스트 · HTML 이메일 | v13")
+st.caption("음성 대화 · 회의 분석 · 업무 체크리스트 · HTML 이메일 | v14")
 # 버튼 API 호출은 시간 제한 및 제한된 재시도로 무한 대기를 방지합니다.
 
 # Colab 실행: Colab에서 api_key.txt를 읽어 os.environ에 등록한 뒤 서버를 실행합니다.
@@ -462,7 +500,7 @@ initial = {
     "meeting_data": None, "meeting_hash": None, "report_usage": None,
     "meeting_tts": None, "token_total": 0, "sent_hashes": set(),
     "send_log": [], "task_checks": {}, "send_result": None,
-    "analysis_config_hash": None
+    "analysis_config_hash": None, "pending_email": None, "last_chat_stt": "", "chat_stt_draft": "", "chat_tts_warning": "", "chat_audio_autoplay": False
 }
 for key, value in initial.items():
     if key not in st.session_state:
@@ -505,13 +543,26 @@ def say(text):
 def write_chat(text):
     if not text.strip():
         return
-    reply, usage = general_chat(text, st.session_state.chat_history, client)
+    recipient = setting("GMAIL_ADDRESS").strip()
+    reply, usage, mail_draft = general_chat(
+        text, st.session_state.chat_history, client, recipient_email=recipient
+    )
     st.session_state.chat_history.extend([
         {"role": "user", "content": text}, {"role": "assistant", "content": reply}
     ])
     st.session_state.chat_history = st.session_state.chat_history[-10:]
     st.session_state.chat_tts = None
+    st.session_state.chat_tts_warning = ""
+    st.session_state.chat_audio_autoplay = False
+    if mail_draft:
+        st.session_state.pending_email = mail_draft
     add_usage(usage)
+    # 응답 완료 즉시 음성 생성. TTS 실패해도 텍스트 응답은 유지됩니다.
+    try:
+        st.session_state.chat_tts = say(reply)
+        st.session_state.chat_audio_autoplay = True
+    except Exception as exc:
+        st.session_state.chat_tts_warning = str(exc)
 
 
 def new_meeting_text(text, source_key=None):
@@ -523,21 +574,18 @@ def new_meeting_text(text, source_key=None):
     return True
 
 
-# 추출 설정은 코드에 숨기지 않고 사이드바에서 확인할 수 있도록 합니다.
+# 분석 파라미터는 코드 내부에서 고정합니다. Streamlit에 슬라이더를 표시하지 않습니다.
+MEETING_SAMPLING = {"temperature": 0.1}
+sampling = MEETING_SAMPLING
 with st.sidebar:
-    st.subheader("회의 분석 설정")
-    st.caption("모델: gpt-4o-mini | 스키마: strict=True | JSON 도구: prepare_meeting_report")
-    sampling_mode = st.radio("샘플링 제어", ["Temperature", "Top P"], index=0)
-    if sampling_mode == "Temperature":
-        sampling_value = st.slider("Temperature", 0.0, 1.0, 0.1, 0.1)
-        sampling = {"temperature": sampling_value}
-    else:
-        sampling_value = st.slider("Top P", 0.1, 1.0, 0.9, 0.05)
-        sampling = {"top_p": sampling_value}
-    st.caption("Top K와 Min P는 현재 사용하는 OpenAI Responses API에서 직접 지정하지 않습니다.")
-    st.caption("일반 대화와 회의 분석은 같은 모델을 사용하지만 현재 도구 실행 흐름은 분리되어 있습니다.")
+    st.subheader("AIVLE AI 개인비서")
+    st.caption("대화 · 회의 분석 · 이메일 발송 · 업무 관리")
+    st.caption("STT: whisper-1 / 회의 분석: gpt-4o-mini / Strict schema: 적용")
+    st.caption("회의 분석 파라미터는 코드에서 관리합니다.")
 
-tab_chat, tab_meeting, tab_tasks = st.tabs(["💬 AI 대화", "🎙️ 회의 분석", "✅ 업무 관리"])
+tab_chat, tab_meeting, tab_email, tab_tasks = st.tabs([
+    "💬 AI 대화", "🎙️ 회의 분석", "📨 이메일 발송", "✅ 업무 관리"
+])
 
 with tab_chat:
     st.subheader("일반 질문 및 음성 대화")
@@ -545,18 +593,26 @@ with tab_chat:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
-    with st.expander("🎙️ 음성으로 질문하기"):
+    with st.expander("🎙️ 음성으로 질문하기 / STT 확인", expanded=False):
         chat_audio = st.audio_input("질문을 녹음하세요", key="chat_microphone")
         chat_upload = st.file_uploader(
             "또는 녹음 파일 업로드", type=["mp3", "wav", "m4a", "mp4", "webm"], key="chat_upload"
         )
         selected = chat_audio or chat_upload
-        if st.button("음성 질문 실행", disabled=selected is None):
+        if st.button("1. Whisper-1 음성 인식", disabled=selected is None):
             try:
-                with st.spinner("Whisper-1 음성 인식 및 답변 생성 중..."):
+                with st.spinner("음성을 텍스트로 변환 중..."):
                     text, reused = transcribe(selected)
-                    write_chat(text)
-                st.info(f"인식된 질문: {text}" + (" (캐시 재사용)" if reused else ""))
+                    st.session_state.last_chat_stt = text
+                    st.session_state.chat_stt_draft = text
+                st.success("STT 완료: 변환된 문장을 확인하고 필요하면 수정하세요." + (" (캐시 재사용)" if reused else ""))
+            except Exception as exc:
+                st.error(f"STT 오류: {exc}")
+        st.text_area("인식된 질문 (수정 가능)", key="chat_stt_draft", height=90)
+        if st.button("2. 확인한 질문으로 AI에게 요청", disabled=not st.session_state.chat_stt_draft.strip()):
+            try:
+                with st.spinner("답변과 음성을 생성 중..."):
+                    write_chat(st.session_state.chat_stt_draft)
                 st.rerun()
             except Exception as exc:
                 st.error(f"음성 질문 처리 실패: {exc}")
@@ -564,28 +620,22 @@ with tab_chat:
     typed = st.chat_input("AIVLE에게 질문하세요")
     if typed:
         try:
-            with st.spinner("답변 생성 중..."):
+            with st.spinner("답변과 TTS 생성 중..."):
                 write_chat(typed)
             st.rerun()
         except Exception as exc:
             st.error(f"대화 오류: {exc}")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🔊 마지막 답변 읽기", disabled=not st.session_state.chat_history):
-            try:
-                last = st.session_state.chat_history[-1]
-                if last["role"] == "assistant":
-                    st.session_state.chat_tts = say(last["content"])
-            except Exception as exc:
-                st.error(f"TTS 오류: {exc}")
-    with c2:
-        if st.button("대화 기록 초기화"):
-            st.session_state.chat_history = []
-            st.session_state.chat_tts = None
-            st.rerun()
     if st.session_state.chat_tts:
-        st.audio(st.session_state.chat_tts, format="audio/mp3")
+        st.audio(st.session_state.chat_tts, format="audio/mp3", autoplay=st.session_state.chat_audio_autoplay)
+        st.session_state.chat_audio_autoplay = False
+    if st.session_state.chat_tts_warning:
+        st.warning("텍스트 답변은 완료되었지만 음성 생성에 실패했습니다: " + st.session_state.chat_tts_warning)
+    if st.button("대화 기록 초기화"):
+        st.session_state.chat_history = []
+        st.session_state.chat_tts = None
+        st.session_state.pending_email = None
+        st.rerun()
 
 with tab_meeting:
     st.subheader("회의록 입력 / 음성 변환")
@@ -662,35 +712,82 @@ with tab_meeting:
         if st.session_state.meeting_tts:
             st.audio(st.session_state.meeting_tts, format="audio/mp3")
 
-        report_html = create_html_report(data)
-        st.subheader("📧 HTML 메일 미리보기")
-        components.html(report_html, height=720, scrolling=True)
-        col1, col2 = st.columns(2)
-        col1.download_button("HTML 다운로드", report_html, "aivle_meeting_report.html", "text/html")
-        col2.download_button("JSON 다운로드", json.dumps(data, ensure_ascii=False, indent=2), "aivle_meeting_report.json", "application/json")
-
-        recipient = setting("GMAIL_ADDRESS").strip()
-        st.caption(f"수신자: {recipient or '설정 필요'} (본인 메일만 허용)")
-        already_sent = current_hash in st.session_state.sent_hashes
-        if already_sent:
-            st.success("이 세션에서 동일 회의록 보고서를 이미 발송했습니다.")
-        approved = st.checkbox("내용 확인 후 이메일 발송에 동의합니다.", key="approve_" + current_hash[:12])
-        if st.button("📨 이메일 발송", disabled=(not recipient or not approved or already_sent)):
-            result = send_email(
-                recipient, "AIVLE | 회의 요약 및 업무 보고", report_html,
-                sender=setting("GMAIL_ADDRESS"), password=setting("GMAIL_APP_PASSWORD")
-            )
-            st.session_state.send_result = result
-            if result["status"] == "success":
-                st.session_state.sent_hashes.add(current_hash)
-                st.session_state.send_log.append({"회의록": current_hash[:12], "수신자": recipient, "상태": "SMTP 수락"})
-                st.success(result["message"])
-            else:
-                st.error(result.get("message", "발송 오류"))
+        st.info("HTML 회의 보고서 확인 및 메일 발송은 상단의 📨 이메일 발송 탭에서 진행할 수 있습니다.")
         if st.session_state.report_usage:
             st.caption(f"분석 토큰 사용량: {st.session_state.report_usage}")
     elif st.session_state.meeting_data is not None:
         st.info("회의록이나 생성 설정이 변경되었습니다. 다시 분석해야 현재 설정으로 메일을 발송할 수 있습니다.")
+
+with tab_email:
+    st.subheader("📨 이메일 작성 및 발송")
+    st.caption("AI 대화에서 '이메일로 보내줘'라고 요청하면 Function Calling으로 초안을 준비합니다. 발송은 반드시 직접 승인해야 합니다.")
+    recipient = setting("GMAIL_ADDRESS").strip()
+    if recipient:
+        st.write(f"수신자: {recipient} (본인 계정만 허용)")
+    else:
+        st.warning("GMAIL_ADDRESS가 설정되지 않았습니다. 메일 발송이 비활성화됩니다.")
+
+    mail_sources = ["직접 작성"]
+    if st.session_state.pending_email:
+        mail_sources.insert(0, "AI가 준비한 이메일")
+    report_ready = (
+        st.session_state.meeting_data is not None
+        and st.session_state.meeting_hash == sha256(st.session_state.meeting_draft)
+        and st.session_state.analysis_config_hash == sha256(json.dumps(sampling, sort_keys=True))
+    )
+    if report_ready:
+        mail_sources.insert(0, "회의 분석 HTML 보고서")
+    source = st.radio("이메일 내용 선택", mail_sources, horizontal=True)
+
+    if source == "회의 분석 HTML 보고서":
+        email_subject = "AIVLE | 회의 요약 및 업무 보고"
+        email_body = create_html_report(st.session_state.meeting_data)
+        mail_html = True
+    elif source == "AI가 준비한 이메일":
+        draft = st.session_state.pending_email
+        email_subject = draft["subject"]
+        email_body = draft["body"]
+        mail_html = False
+    else:
+        email_subject = ""
+        email_body = ""
+        mail_html = False
+
+    if source != "회의 분석 HTML 보고서":
+        email_subject = st.text_input("제목", value=email_subject, key="email_subject_" + source)
+        email_body = st.text_area("본문 (내용 확인 및 편집)", value=email_body, height=200, key="email_body_" + source)
+    else:
+        st.write("**제목:**", email_subject)
+        components.html(email_body, height=640, scrolling=True)
+        st.download_button("HTML 보고서 다운로드", email_body, "aivle_meeting_report.html", "text/html")
+
+    if not setting("GMAIL_APP_PASSWORD"):
+        st.warning("GMAIL_APP_PASSWORD가 설정되지 않았습니다. Gmail SMTP 발송이 불가능합니다.")
+    # 동일한 내용의 중복 발송을 세션 기준으로 방지
+    message_id = sha256((recipient + email_subject + email_body).encode("utf-8"))
+    previously_sent = message_id in st.session_state.sent_hashes
+    if previously_sent:
+        st.success("현재 세션에서 동일한 제목과 본문의 이메일을 이미 발송했습니다.")
+    approved = st.checkbox("수신자와 내용을 확인했고 이메일 발송에 동의합니다.", key="mail_approval_" + message_id[:12])
+    can_send = bool(recipient and setting("GMAIL_APP_PASSWORD") and email_subject.strip()
+                    and email_body.strip() and approved and not previously_sent)
+    if st.button("📤 이메일 발송", type="primary", disabled=not can_send):
+        # HTML 보고서는 HTML 유지, 일반 초안은 안전한 HTML 텍스트로 변환
+        outgoing_body = email_body if mail_html else "<html><body><div style='white-space:pre-wrap;font-family:Arial,sans-serif;'>" + html.escape(email_body) + "</div></body></html>"
+        result = send_email(
+            recipient, email_subject, outgoing_body,
+            sender=setting("GMAIL_ADDRESS"), password=setting("GMAIL_APP_PASSWORD")
+        )
+        st.session_state.send_result = result
+        if result["status"] == "success":
+            st.session_state.sent_hashes.add(message_id)
+            st.session_state.send_log.append({"제목": email_subject, "수신자": recipient, "상태": "SMTP 수락"})
+            if source == "AI가 준비한 이메일":
+                st.session_state.pending_email = None
+            st.success(result["message"])
+        else:
+            st.error(result.get("message", "발송 오류"))
+
 
 with tab_tasks:
     st.subheader("김 대리 담당 업무")

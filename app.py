@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# AIVLE AI Assistant v20 · ONE FILE
+# AIVLE AI Assistant v21 · v20 + UI/voice improvements
 # 수정 위치 안내: ① 함수/프롬프트/스키마 ② Streamlit UI
 # API 키를 소스에 직접 작성하지 마세요.
 
@@ -423,10 +423,17 @@ EMAIL_TOOLS = [{
 }]
 
 
-def general_chat(user_message, recent_messages, client=None, model="gpt-4o-mini", recipient_email="", work_context=""):
+def general_chat(user_message, recent_messages, client=None, model="gpt-4o-mini", recipient_email="", work_context="", answer_style="기본"):
     """일반 대화 + 이메일 초안 요청 통합. 실제 발송은 사용자 승인 후에만 수행."""
     client = client or OpenAI(timeout=30.0, max_retries=1)
-    history = [{"role": x["role"], "content": x["content"]} for x in recent_messages[-10:]]
+    style_rules = {
+        "간결": "핵심부터 1~3문장. 중요 날짜와 수치는 유지하고 불필요한 배경을 생략하세요.",
+        "기본": "핵심과 근거를 균형 있게 설명하세요. 필요할 때만 짧은 목록을 사용하세요.",
+        "상세": "확인된 사실과 근거, 담당자·마감일·불확실성을 충분히 설명하세요. 없는 사실을 만들지 마세요.",
+    }
+    selected_style = style_rules.get(answer_style, style_rules["기본"])
+    # 최근 10쌍(최대 20개 메시지)만 API에 전달합니다.
+    history = [{"role": x["role"], "content": x["content"]} for x in recent_messages[-20:]]
     res = client.responses.create(
         model=model,
         input=[
@@ -436,7 +443,7 @@ def general_chat(user_message, recent_messages, client=None, model="gpt-4o-mini"
 수신자 주소를 명시하지 않았으면 허용된 수신자 주소를 사용합니다.
 발송을 완료했다고 말하지 않습니다. 사용자 승인 전에는 초안만 준비합니다.
 단순한 회의 요약이나 일반 질문에는 메일 도구를 사용하지 않습니다.
-""" + f"\n허용된 이메일 수신자: {recipient_email or '확인 필요'}" + ("\n[확인된 업무 컨텍스트]\n" + work_context if work_context else "")},
+""" + "\n[응답 스타일]\n" + selected_style + f"\n허용된 이메일 수신자: {recipient_email or '확인 필요'}" + ("\n[확인된 업무 컨텍스트]\n" + work_context if work_context else "")},
             *history,
             {"role": "user", "content": user_message}
         ],
@@ -452,6 +459,29 @@ def general_chat(user_message, recent_messages, client=None, model="gpt-4o-mini"
         return f"이메일 초안을 준비했습니다: {draft['subject']}. 📨 이메일 발송 탭에서 내용을 확인하고 승인해주세요.", usage, draft
     return res.output_text or "응답을 생성하지 못했습니다.", usage, None
 
+
+
+def make_voice_answer(client, screen_answer, answer_style="기본", model="gpt-4o-mini"):
+    """화면 답변의 사실을 유지하면서 말하기에 적합한 별도 대본 생성."""
+    lengths = {"간결": "1~2문장", "기본": "2~4문장", "상세": "4~6문장"}
+    length = lengths.get(answer_style, "2~4문장")
+    res = client.responses.create(
+        model=model,
+        input=[
+            {"role": "system", "content": (
+                "당신은 업무용 TTS 대본 편집자입니다. 아래 화면 답변에 있는 사실만 사용하고 "
+                "날짜·숫자·확인 필요 같은 불확실성을 왜곡하지 마세요. "
+                "새로운 정보, 권유, 인사말을 추가하지 마세요. "
+                "Markdown 표·기호·URL을 낭독하지 말고 자연스러운 한국어 구어체로 바꾸세요. "
+                f"분량은 {length}입니다. 대본 본문만 출력하세요."
+            )},
+            {"role": "user", "content": screen_answer[:9000]}
+        ],
+        max_output_tokens=350
+    )
+    usage = {"input": res.usage.input_tokens, "output": res.usage.output_tokens,
+             "total": res.usage.total_tokens} if res.usage else None
+    return (res.output_text or screen_answer), usage
 
 
 # =======================================================
@@ -751,6 +781,8 @@ client = OpenAI(api_key=api_key, timeout=30.0, max_retries=1)
 
 initial = {
     "chat_history": [], "chat_tts": None, "chat_audio_hash": None,
+    "answer_style": "기본", "enable_tts": True, "separate_voice_answer": True,
+    "tts_voice": "nova", "chat_voice_text": "",
     "stt_cache": {}, "meeting_draft": "", "meeting_source_hash": None,
     "meeting_data": None, "meeting_hash": None, "report_usage": None,
     "meeting_tts": None, "token_total": 0, "sent_hashes": set(),
@@ -791,8 +823,9 @@ def transcribe(audio):
 
 
 def say(text):
+    # 사용자가 직접 선택한 음성만 사용합니다.
     result = client.audio.speech.create(
-        model="gpt-4o-mini-tts", voice="nova", input=text[:4000]
+        model="gpt-4o-mini-tts", voice=st.session_state.tts_voice, input=text[:4000]
     )
     return result.content
 
@@ -803,24 +836,39 @@ def write_chat(text):
     recipient = setting("GMAIL_ADDRESS").strip()
     reply, usage, mail_draft = general_chat(
         text, st.session_state.chat_history, client, recipient_email=recipient,
-        work_context=build_work_context(st.session_state)
+        work_context=build_work_context(st.session_state),
+        answer_style=st.session_state.answer_style
     )
     st.session_state.chat_history.extend([
         {"role": "user", "content": text}, {"role": "assistant", "content": reply}
     ])
-    st.session_state.chat_history = st.session_state.chat_history[-10:]
+    st.session_state.chat_history = st.session_state.chat_history[-20:]
     st.session_state.chat_tts = None
+    st.session_state.chat_voice_text = ""
     st.session_state.chat_tts_warning = ""
     st.session_state.chat_audio_autoplay = False
     if mail_draft:
         st.session_state.pending_email = mail_draft
     add_usage(usage)
-    # 응답 완료 즉시 음성 생성. TTS 실패해도 텍스트 응답은 유지됩니다.
-    try:
-        st.session_state.chat_tts = say(reply)
-        st.session_state.chat_audio_autoplay = True
-    except Exception as exc:
-        st.session_state.chat_tts_warning = str(exc)
+    # 음성 비활성화 시 추가 API 요청을 하지 않습니다.
+    if st.session_state.enable_tts:
+        try:
+            voice_text = reply
+            # 이메일 발송 요청은 승인 대기 상태만 낭독합니다.
+            if st.session_state.separate_voice_answer:
+                try:
+                    voice_text, voice_usage = make_voice_answer(
+                        client, reply, answer_style=st.session_state.answer_style
+                    )
+                    add_usage(voice_usage)
+                except Exception:
+                    # 대본 요약에 실패해도 원래 답변을 읽도록 폴백합니다.
+                    voice_text = reply
+            st.session_state.chat_voice_text = voice_text
+            st.session_state.chat_tts = say(voice_text)
+            st.session_state.chat_audio_autoplay = True
+        except Exception as exc:
+            st.session_state.chat_tts_warning = str(exc)
 
 
 def new_meeting_text(text, source_key=None):
@@ -853,6 +901,14 @@ tab_chat, tab_meeting, tab_tasks, tab_decisions, tab_reports, tab_email = st.tab
 
 with tab_chat:
     st.markdown('<div class="aivle-heading">AI와 대화하기</div>', unsafe_allow_html=True)
+    with st.expander("⚙️ 답변 및 음성 설정", expanded=False):
+        st.selectbox("답변 길이", ["간결", "기본", "상세"], key="answer_style",
+                     help="AI 대화의 화면 답변 길이만 조절합니다. 회의 분석의 필수 항목은 유지합니다.")
+        st.checkbox("음성 답변 자동 생성", key="enable_tts")
+        if st.session_state.enable_tts:
+            st.checkbox("음성용 대본 별도 생성 (추가 토큰 사용)", key="separate_voice_answer")
+            st.selectbox("음성", ["nova", "coral"], key="tts_voice")
+        st.caption("대화는 최대 최근 10쌍을 보관합니다. 세션 종료 후 영구 저장되지는 않습니다.")
     st.markdown('<div class="aivle-hint">텍스트 또는 음성으로 질문하면 AIVLE이 답변을 생성하고 읽어드립니다.</div>', unsafe_allow_html=True)
     if not st.session_state.chat_history:
         st.info("안녕하세요! 회의 요약, 업무 정리, 이메일 초안 등 무엇이든 요청해 보세요.")
@@ -894,6 +950,8 @@ with tab_chat:
             st.error(f"대화 오류: {exc}")
 
     if st.session_state.chat_tts:
+        with st.expander("🔊 음성으로 읽는 대본", expanded=False):
+            st.write(st.session_state.chat_voice_text)
         st.audio(st.session_state.chat_tts, format="audio/mp3", autoplay=st.session_state.chat_audio_autoplay)
         st.session_state.chat_audio_autoplay = False
     if st.session_state.chat_tts_warning:
@@ -901,6 +959,7 @@ with tab_chat:
     if st.button("대화 기록 초기화"):
         st.session_state.chat_history = []
         st.session_state.chat_tts = None
+        st.session_state.chat_voice_text = ""
         st.session_state.pending_email = None
         st.rerun()
 

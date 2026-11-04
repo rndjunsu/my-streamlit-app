@@ -4,35 +4,62 @@ import hmac
 import io
 import json
 import os
-from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
 from aivle_core import analyze_meeting, create_html_report, general_chat, send_email
+from aivle_config import parse_key_text, get_settings
 
 st.set_page_config(page_title="AIVLE AI 개인비서", page_icon="🤖", layout="wide")
 st.title("🤖 AIVLE | AI 개인비서")
 st.caption("음성 대화 · 회의 분석 · 업무 체크리스트 · HTML 이메일")
+# 버튼 API 호출은 시간 제한 및 제한된 재시도로 무한 대기를 방지합니다.
 
-# Secrets는 세션에만 읽고, 화면/로그에 값을 출력하지 않습니다.
+# 수업 자료의 api_key.txt 방식 + Streamlit 세션 업로드 + Cloud Secrets 지원.
+# Streamlit 서버의 os.environ에 업로드한 키를 기록하지 않습니다.
+# Cloud는 여러 이용자가 같은 Python 프로세스를 공유할 수 있기 때문입니다.
+if "aivle_uploaded_keys" not in st.session_state:
+    st.session_state.aivle_uploaded_keys = {}
+
+with st.sidebar:
+    st.subheader("🔐 API 설정 (수업 방식)")
+    key_file = st.file_uploader(
+        "api_key.txt 업로드 (현재 브라우저 세션에서만 사용)",
+        type=["txt"], key="aivle_key_upload",
+        help="KEY=VALUE 형식. GitHub에 업로드하지 마세요."
+    )
+    if key_file is not None:
+        try:
+            parsed = parse_key_text(key_file.getvalue())
+            if "GH_TOKEN" in parsed:
+                st.warning("GitHub 토큰은 앱 인증에 필요하지 않아 업로드 내용에서 제외했습니다.")
+                parsed.pop("GH_TOKEN", None)
+            if parsed != st.session_state.aivle_uploaded_keys:
+                st.session_state.aivle_authenticated = False
+            st.session_state.aivle_uploaded_keys = parsed
+            st.success("키 파일 읽기 완료 (값은 표시하지 않음)")
+        except (UnicodeDecodeError, ValueError) as exc:
+            st.session_state.aivle_uploaded_keys = {}
+            st.error(f"키 파일 형식 오류: {exc}")
+    if st.button("업로드한 인증 정보 지우기"):
+        st.session_state.aivle_uploaded_keys = {}
+        st.session_state.aivle_authenticated = False
+        st.rerun()
+    st.caption("수업 방식: Colab에서는 api_key.txt → os.environ. Cloud에서는 파일을 이 화면에 업로드하거나 Secrets 사용.")
+
+try:
+    cloud = dict(st.secrets)
+except Exception:
+    cloud = {}
+settings = get_settings(session_values=st.session_state.aivle_uploaded_keys, cloud_values=cloud)
+
 def setting(name):
-    value = os.getenv(name)
-    if value:
-        return str(value)
-    try:
-        return str(st.secrets.get(name, ""))
-    except Exception:
-        return ""
-
-for name in ("OPENAI_API_KEY", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD"):
-    value = setting(name)
-    if value:
-        os.environ[name] = value
+    return settings.get(name, "")
 
 password = setting("AIVLE_ACCESS_PASSWORD")
 if not password:
-    st.error("AIVLE_ACCESS_PASSWORD를 Streamlit Secrets에 설정해주세요.")
+    st.warning("AIVLE_ACCESS_PASSWORD가 필요합니다. api_key.txt를 왼쪽에서 업로드하거나 Secrets에 등록하세요.")
     st.stop()
 if not st.session_state.get("aivle_authenticated", False):
     entered = st.text_input("AIVLE 접속 비밀번호", type="password")
@@ -44,9 +71,9 @@ if not st.session_state.get("aivle_authenticated", False):
             st.error("비밀번호를 확인해주세요.")
     st.stop()
 if not setting("OPENAI_API_KEY"):
-    st.error("OPENAI_API_KEY를 환경변수 또는 Streamlit Secrets에 등록해주세요.")
+    st.error("OPENAI_API_KEY가 필요합니다. api_key.txt 업로드, 환경변수 또는 Secrets를 확인하세요.")
     st.stop()
-client = OpenAI()
+client = OpenAI(api_key=setting("OPENAI_API_KEY"), timeout=30.0, max_retries=1)
 
 initial = {
     "chat_history": [], "chat_tts": None, "chat_audio_hash": None,
@@ -250,7 +277,10 @@ with tab_meeting:
             st.success("이 세션에서 동일 회의록 보고서를 이미 발송했습니다.")
         approved = st.checkbox("내용 확인 후 이메일 발송에 동의합니다.", key="approve_" + current_hash[:12])
         if st.button("📨 이메일 발송", disabled=(not recipient or not approved or already_sent)):
-            result = send_email(recipient, "AIVLE | 회의 요약 및 업무 보고", report_html)
+            result = send_email(
+                recipient, "AIVLE | 회의 요약 및 업무 보고", report_html,
+                sender=setting("GMAIL_ADDRESS"), password=setting("GMAIL_APP_PASSWORD")
+            )
             st.session_state.send_result = result
             if result["status"] == "success":
                 st.session_state.sent_hashes.add(current_hash)

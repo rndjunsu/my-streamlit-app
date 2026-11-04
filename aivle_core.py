@@ -323,7 +323,7 @@ SYSTEM_ROLE = """당신은 김 대리의 전문 AI 비서 에이블입니다.
 def analyze_meeting(meeting_text, client=None, model="gpt-4o-mini"):
     if not meeting_text or not meeting_text.strip():
         raise ValueError("회의록이 비어 있습니다.")
-    client = client or OpenAI()
+    client = client or OpenAI(timeout=30.0, max_retries=1)
     res = client.responses.create(
         model=model,
         input=[
@@ -350,9 +350,9 @@ def analyze_meeting(meeting_text, client=None, model="gpt-4o-mini"):
     return data, usage
 
 
-def send_email(to, subject, body):
-    sender = os.getenv("GMAIL_ADDRESS", "").strip()
-    password = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
+def send_email(to, subject, body, sender=None, password=None):
+    sender = (sender if sender is not None else os.getenv("GMAIL_ADDRESS", "")).strip()
+    password = (password if password is not None else os.getenv("GMAIL_APP_PASSWORD", "")).replace(" ", "").strip()
     if not sender or not password:
         return {"status": "error", "message": "GMAIL_ADDRESS / GMAIL_APP_PASSWORD 환경변수를 확인하세요."}
     if not to or to.strip().lower() != sender.lower():
@@ -371,7 +371,7 @@ def send_email(to, subject, body):
 
 
 def general_chat(user_message, recent_messages, client=None, model="gpt-4o-mini"):
-    client = client or OpenAI()
+    client = client or OpenAI(timeout=30.0, max_retries=1)
     history = [{"role": x["role"], "content": x["content"]} for x in recent_messages[-10:]]
     res = client.responses.create(
         model=model,

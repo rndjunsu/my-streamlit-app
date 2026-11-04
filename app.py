@@ -1549,7 +1549,7 @@ with right:
     # 직접 이메일 작성 (기존 SMTP / 승인 로직 재사용)
     # -----------------------------------------------------
 
-    with st.expander("✉️ 직접 이메일 작성하기 · HTML 미리보기", expanded=True):
+    with st.expander("✉️ 직접 이메일 작성하기", expanded=False):
         st.caption(
             "회의록 없이도 이메일을 작성할 수 있습니다. "
             "작성 후에는 아래 승인 화면에서 최종 확인합니다."
@@ -1593,161 +1593,163 @@ with right:
     # 이메일 승인 및 발송
     # -----------------------------------------------------
 
-    if st.session_state.pending_email:
+    with st.expander("📧 이메일 초안 및 HTML 미리보기", expanded=bool(st.session_state.pending_email)):
 
-        st.markdown("#### 📧 이메일 초안 및 HTML 미리보기")
-
-        st.caption(
-            "승인 버튼을 누르기 전까지 "
-            "이메일은 실제 발송되지 않습니다."
-        )
-
-        mail = st.session_state.pending_email
-
-        if mail.get("report_data") is not None:
-            st.caption("📄 실제 발송될 HTML 회의 보고서 미리보기")
-            st.components.v1.html(
-                create_html_report(mail["report_data"]),
-                height=620,
-                scrolling=True
-            )
-            st.info("HTML 보고서 내용은 위 미리보기 기준으로 발송됩니다.")
+        if not st.session_state.pending_email:
+            st.info("아직 작성된 이메일 초안이 없습니다. 위의 직접 이메일 작성하기 또는 AI 채팅에서 초안을 생성해 주세요.")
         else:
-            st.caption("📄 v23 스타일 HTML 이메일 미리보기 (현재 저장된 초안)")
-            st.components.v1.html(
-                create_html_email(mail.get("subject", ""), mail.get("body", "")),
-                height=300,
-                scrolling=True
+
+            st.caption(
+                "승인 버튼을 누르기 전까지 "
+                "이메일은 실제 발송되지 않습니다."
             )
 
-        with st.form("email_approval"):
+            mail = st.session_state.pending_email
 
-            to = st.text_input(
-                "받는 사람",
-                value=mail.get("recipient", "")
-            )
-
-            subject = st.text_input(
-                "메일 제목",
-                value=mail.get("subject", "")
-            )
-
-            body = st.text_area(
-                "메일 본문",
-                value=mail.get("body", ""),
-                height=170,
-                disabled=bool(mail.get("report_data"))
-            )
-
-            approve, preview_col, cancel = st.columns(3)
-
-            with approve:
-
-                send_clicked = st.form_submit_button(
-                    "✅ 발송 승인",
-                    type="primary",
-                    use_container_width=True
-                )
-
-            with preview_col:
-                refresh_clicked = st.form_submit_button(
-                    "🔄 미리보기 갱신", use_container_width=True
-                )
-
-            with cancel:
-
-                cancel_clicked = st.form_submit_button(
-                    "취소",
-                    use_container_width=True
-                )
-
-        if refresh_clicked:
-            # form 안에서 수정한 제목/본문으로 실제 전송 HTML을 갱신
-            updated = {
-                "recipient": to.strip(),
-                "subject": subject.strip(),
-                "body": body.strip(),
-            }
             if mail.get("report_data") is not None:
-                updated["report_data"] = mail["report_data"]
-            st.session_state.pending_email = updated
-            st.rerun()
-
-        if cancel_clicked:
-
-            st.session_state.pending_email = None
-            st.rerun()
-
-        if send_clicked:
-
-            approved = {
-                "recipient": to.strip(),
-                "subject": subject.strip(),
-                "body": body.strip()
-            }
-            if mail.get("report_data") is not None:
-                approved["report_data"] = mail["report_data"]
-
-            if not valid_email(approved["recipient"]):
-
-                st.error(
-                    "올바른 받는 사람 이메일을 입력하세요."
+                st.caption("📄 실제 발송될 HTML 회의 보고서 미리보기")
+                st.components.v1.html(
+                    create_html_report(mail["report_data"]),
+                    height=620,
+                    scrolling=True
                 )
-
-            elif not approved["subject"] or not approved["body"]:
-
-                st.error(
-                    "제목과 본문을 입력하세요."
-                )
-
+                st.info("HTML 보고서 내용은 위 미리보기 기준으로 발송됩니다.")
             else:
+                st.caption("📄 v23 스타일 HTML 이메일 미리보기 (현재 저장된 초안)")
+                st.components.v1.html(
+                    create_html_email(mail.get("subject", ""), mail.get("body", "")),
+                    height=300,
+                    scrolling=True
+                )
 
-                mail_id = hashlib.sha256(
-                    json.dumps(
-                        approved,
-                        sort_keys=True,
-                        ensure_ascii=False
-                    ).encode()
-                ).hexdigest()
+            with st.form("email_approval"):
 
-                if mail_id in st.session_state.sent_ids:
+                to = st.text_input(
+                    "받는 사람",
+                    value=mail.get("recipient", "")
+                )
 
-                    st.warning(
-                        "현재 세션에서 이미 발송한 메일입니다."
+                subject = st.text_input(
+                    "메일 제목",
+                    value=mail.get("subject", "")
+                )
+
+                body = st.text_area(
+                    "메일 본문",
+                    value=mail.get("body", ""),
+                    height=170,
+                    disabled=bool(mail.get("report_data"))
+                )
+
+                approve, preview_col, cancel = st.columns(3)
+
+                with approve:
+
+                    send_clicked = st.form_submit_button(
+                        "✅ 발송 승인",
+                        type="primary",
+                        use_container_width=True
+                    )
+
+                with preview_col:
+                    refresh_clicked = st.form_submit_button(
+                        "🔄 미리보기 갱신", use_container_width=True
+                    )
+
+                with cancel:
+
+                    cancel_clicked = st.form_submit_button(
+                        "취소",
+                        use_container_width=True
+                    )
+
+            if refresh_clicked:
+                # form 안에서 수정한 제목/본문으로 실제 전송 HTML을 갱신
+                updated = {
+                    "recipient": to.strip(),
+                    "subject": subject.strip(),
+                    "body": body.strip(),
+                }
+                if mail.get("report_data") is not None:
+                    updated["report_data"] = mail["report_data"]
+                st.session_state.pending_email = updated
+                st.rerun()
+
+            if cancel_clicked:
+
+                st.session_state.pending_email = None
+                st.rerun()
+
+            if send_clicked:
+
+                approved = {
+                    "recipient": to.strip(),
+                    "subject": subject.strip(),
+                    "body": body.strip()
+                }
+                if mail.get("report_data") is not None:
+                    approved["report_data"] = mail["report_data"]
+
+                if not valid_email(approved["recipient"]):
+
+                    st.error(
+                        "올바른 받는 사람 이메일을 입력하세요."
+                    )
+
+                elif not approved["subject"] or not approved["body"]:
+
+                    st.error(
+                        "제목과 본문을 입력하세요."
                     )
 
                 else:
 
-                    with st.spinner(
-                        "승인된 이메일을 전송 중..."
-                    ):
+                    mail_id = hashlib.sha256(
+                        json.dumps(
+                            approved,
+                            sort_keys=True,
+                            ensure_ascii=False
+                        ).encode()
+                    ).hexdigest()
 
-                        try:
-                            # 사용자가 UI에서 승인한 값만 직접 전달합니다.
-                            # AI 도구 호출을 다시 거치면 호출 실패/인자 차이로 발송이 중단될 수 있습니다.
-                            success, message = send_email(
-                                approved["recipient"],
-                                approved["subject"],
-                                approved["body"],
-                                report_data=approved.get("report_data")
-                            )
+                    if mail_id in st.session_state.sent_ids:
 
-                            if success:
-                                st.session_state.sent_ids.add(
-                                    mail_id
+                        st.warning(
+                            "현재 세션에서 이미 발송한 메일입니다."
+                        )
+
+                    else:
+
+                        with st.spinner(
+                            "승인된 이메일을 전송 중..."
+                        ):
+
+                            try:
+                                # 사용자가 UI에서 승인한 값만 직접 전달합니다.
+                                # AI 도구 호출을 다시 거치면 호출 실패/인자 차이로 발송이 중단될 수 있습니다.
+                                success, message = send_email(
+                                    approved["recipient"],
+                                    approved["subject"],
+                                    approved["body"],
+                                    report_data=approved.get("report_data")
                                 )
 
-                                st.session_state.pending_email = None
-                                st.success(message)
+                                if success:
+                                    st.session_state.sent_ids.add(
+                                        mail_id
+                                    )
 
-                            else:
-                                st.error(message)
+                                    st.session_state.pending_email = None
+                                    st.success(message)
 
-                        except Exception as e:
-                            st.error(
-                                f"메일 처리 오류: "
-                                f"{type(e).__name__}"
-                            )
+                                else:
+                                    st.error(message)
+
+                            except Exception as e:
+                                st.error(
+                                    f"메일 처리 오류: "
+                                    f"{type(e).__name__}"
+                                )
 
 # =========================================================
 # 10. 추천 명령

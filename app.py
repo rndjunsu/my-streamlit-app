@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# AIVLE AI Assistant v21 · v20 + UI/voice improvements
+# AIVLE AI Assistant v22 · UI polish + v21 features
 # 수정 위치 안내: ① 함수/프롬프트/스키마 ② Streamlit UI
 # API 키를 소스에 직접 작성하지 마세요.
 
@@ -7,6 +7,7 @@
 import os
 import json
 import html
+import base64
 import smtplib
 from email.mime.text import MIMEText
 from email.utils import formataddr
@@ -662,11 +663,17 @@ st.set_page_config(
 # AIVLE UI 디자인 시스템: 여기서 색상, 폰트, 간격을 수정할 수 있습니다.
 # 모든 스타일은 Streamlit 화면 전용이며 LLM 토큰을 사용하지 않습니다.
 # =======================================================
+# 찬우님 UI의 수달 캐릭터를 파일/외부 URL 의존 없이 내장합니다.
+AIVLE_OTTER_SVG = '\n<svg xmlns="http://www.w3.org/2000/svg"\nviewBox="0 0 380 440" width="380" height="440">\n\n<defs>\n <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">\n  <stop stop-color="#c28a61"/>\n  <stop offset="1" stop-color="#90603e"/>\n </linearGradient>\n\n <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">\n  <stop stop-color="#ecfbff"/>\n  <stop offset="1" stop-color="#d9f0ff"/>\n </linearGradient>\n</defs>\n\n<rect x="7" y="7" width="366" height="426" rx="34"\nfill="url(#blue)" stroke="#c1e5f4" stroke-width="3"/>\n\n<circle cx="60" cy="67" r="11" fill="#ffffff" opacity=".8"/>\n<circle cx="320" cy="346" r="18" fill="#ffffff" opacity=".5"/>\n\n<!-- 꼬리 -->\n<path d="M123 300 Q63 335 82 388 Q113 420 146 371"\nfill="#895638"/>\n\n<!-- 몸 -->\n<ellipse cx="191" cy="288" rx="97" ry="111" fill="url(#fur)"/>\n<ellipse cx="191" cy="303" rx="66" ry="85" fill="#ffe6cc"/>\n\n<!-- 발 -->\n<ellipse cx="144" cy="388" rx="35" ry="20" fill="#805031"/>\n<ellipse cx="238" cy="388" rx="35" ry="20" fill="#805031"/>\n\n<!-- 팔 -->\n<ellipse cx="104" cy="282" rx="24" ry="61"\nfill="#a76c48" transform="rotate(16 104 282)"/>\n\n<ellipse cx="284" cy="283" rx="25" ry="58"\nfill="#a76c48" transform="rotate(-16 284 283)"/>\n\n<!-- 메모지 -->\n<rect x="260" y="260" width="69" height="92"\nrx="11" fill="white" stroke="#80c9e2" stroke-width="4"/>\n\n<rect x="282" y="252" width="26" height="14"\nrx="5" fill="#8dd7eb"/>\n\n<path d="M274 286h41 M274 303h41 M274 320h32"\nstroke="#9fc7d5" stroke-width="4" stroke-linecap="round"/>\n\n<!-- 귀 -->\n<circle cx="135" cy="120" r="26" fill="#a56d48"/>\n<circle cx="247" cy="120" r="26" fill="#a56d48"/>\n\n<circle cx="135" cy="120" r="13" fill="#e4bca0"/>\n<circle cx="247" cy="120" r="13" fill="#e4bca0"/>\n\n<!-- 머리 -->\n<ellipse cx="191" cy="179" rx="103" ry="104" fill="url(#fur)"/>\n<ellipse cx="191" cy="201" rx="72" ry="58" fill="#ffe4cc"/>\n\n<!-- 눈 -->\n<circle cx="157" cy="170" r="10" fill="#2c251f"/>\n<circle cx="225" cy="170" r="10" fill="#2c251f"/>\n\n<circle cx="154" cy="167" r="3" fill="white"/>\n<circle cx="222" cy="167" r="3" fill="white"/>\n\n<!-- 코 -->\n<ellipse cx="191" cy="192" rx="12" ry="9" fill="#4e382d"/>\n\n<!-- 입 -->\n<path d="M172 212 Q191 232 210 212"\nfill="none" stroke="#4e382d"\nstroke-width="5" stroke-linecap="round"/>\n\n<!-- 볼 -->\n<ellipse cx="133" cy="195" rx="13" ry="8"\nfill="#f2ada6" opacity=".65"/>\n\n<ellipse cx="249" cy="195" rx="13" ry="8"\nfill="#f2ada6" opacity=".65"/>\n\n<!-- 명찰 -->\n<rect x="153" y="260" width="76" height="31"\nrx="16" fill="#87d8ef"/>\n\n<text x="191" y="281" text-anchor="middle"\nfont-family="Arial,sans-serif" font-size="16"\nfont-weight="bold" fill="#265269">AIBLE</text>\n\n<!-- 말풍선 -->\n<rect x="242" y="47" width="110" height="47"\nrx="16" fill="white" stroke="#bee1f0" stroke-width="2"/>\n\n<path d="M258 94l-14 14 4-17"\nfill="white" stroke="#bee1f0" stroke-width="2"/>\n\n<text x="297" y="76" text-anchor="middle"\nfont-family="sans-serif" font-size="16"\nfont-weight="bold" fill="#3d6175">안녕하세요!</text>\n\n</svg>\n'
+AIVLE_OTTER_DATA = "data:image/svg+xml;base64," + base64.b64encode(AIVLE_OTTER_SVG.encode("utf-8")).decode("ascii")
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
 :root {--aivle-ink:#17253f;--aivle-blue:#365bd6;--aivle-soft:#eff3fc;--aivle-muted:#65738a;}
-html,body,[class*="st-"] {font-family:'DM Sans','Noto Sans KR',sans-serif;}
+html,body {font-family:'DM Sans','Noto Sans KR',sans-serif;}
+/* Streamlit 내부 아이콘 폰트를 덮어쓰지 않습니다. */
+.material-icons,.material-symbols-rounded,.material-symbols-outlined,[data-testid='stIconMaterial'] {font-family:'Material Symbols Rounded','Material Icons' !important;font-weight:normal !important;font-style:normal !important;letter-spacing:normal !important;text-transform:none !important;white-space:nowrap !important;}
 [data-testid="stAppViewContainer"] {background:linear-gradient(175deg,#f6f8ff 0%,#ffffff 42%,#f7f9fc 100%);}
 .block-container {max-width:1170px;padding-top:1.65rem;padding-bottom:3.2rem;}
 [data-testid="stSidebar"] {display:none;}
@@ -717,34 +724,55 @@ html,body,[class*="st-"] {font-family:'DM Sans','Noto Sans KR',sans-serif;}
 .aivle-status {margin-top:3px;}
 [data-testid="stImage"] img {object-fit:contain;filter:drop-shadow(0 16px 22px rgba(50,88,158,.13));max-height:220px;}
 @media(max-width:740px) {.aivle-intro h1{font-size:25px}.aivle-feature-strip{gap:1px;padding:8px}.aivle-feature-strip span{font-size:11px}}
+
+/* v22: 간결한 개인비서 대시보드, 명확한 클릭 영역 */
+.aivle-intro {padding:15px 0 18px;}
+.aivle-intro-tag {background:#edf5ff;color:#2d5c93;letter-spacing:.065em;margin-bottom:12px;}
+.aivle-intro h1 {font-size:clamp(27px,3.25vw,39px);line-height:1.37;letter-spacing:-.055em;margin:0 0 9px;word-break:keep-all;}
+.aivle-intro p {font-size:15px;line-height:1.85;color:#62738a;word-break:keep-all;}
+.aivle-otter-card {border:1px solid #d3e9f5;background:linear-gradient(155deg,#f1faff,#e8f5ff);border-radius:22px;padding:12px 15px;text-align:center;}
+.aivle-otter-card img {width:auto;max-width:100%;height:165px;display:block;margin:auto;object-fit:contain;}
+.aivle-otter-caption {font-size:12px;font-weight:800;color:#3d7088;margin-top:2px;}
+.aivle-status {margin:6px 0 20px;gap:8px;}
+.aivle-chip {padding:7px 11px;}
+.stTabs [data-baseweb='tab-list'] {background:transparent;border-bottom:1px solid #e5eaf2;border-radius:0;padding:0 0 9px;gap:6px;}
+.stTabs [data-baseweb='tab'] {border:1px solid transparent;padding:0 14px;border-radius:10px;height:40px;}
+.stTabs [aria-selected='true'] {background:#eaf1ff !important;color:#2a54af !important;box-shadow:none;border-color:#d7e4ff;}
+[data-testid='stExpander'] {overflow:visible !important;}
+[data-testid='stExpander'] details {overflow:hidden;border-radius:14px;}
+[data-testid='stExpander'] summary {min-height:49px;display:flex;align-items:center;gap:8px;line-height:1.5;}
+[data-testid='stExpander'] summary p {line-height:1.5;white-space:normal;word-break:keep-all;}
+/* 업로더: 안내 문구, 버튼, 파일명 간 공간 확보 */
+[data-testid='stFileUploader'] {min-width:0;}
+[data-testid='stFileUploader'] label {line-height:1.55 !important;white-space:normal !important;}
+[data-testid='stFileUploaderDropzone'] {min-height:90px;padding:13px 17px !important;border-radius:12px;background:#fbfcff;}
+[data-testid='stFileUploaderDropzone'] section {display:flex;flex-wrap:wrap;align-items:center;column-gap:16px;row-gap:10px;min-width:0;}
+[data-testid='stFileUploaderDropzone'] section>div {min-width:0;flex:1 1 175px;line-height:1.55;overflow-wrap:anywhere;}
+[data-testid='stFileUploaderDropzone'] button {flex:0 0 auto;white-space:nowrap;min-width:100px;margin:0 !important;}
+[data-testid='stFileUploader'] small {line-height:1.5;white-space:normal;}
+[data-testid='stAudioInput'] {min-width:0;}
+[data-testid='stAudioInput'] button {min-width:0;white-space:normal;}
+@media(max-width:740px){.aivle-otter-card img{height:130px}.aivle-intro{padding:5px 0 8px}.aivle-intro h1{font-size:27px}.block-container{padding-top:1rem}.stTabs [data-baseweb='tab']{font-size:12px;padding:0 9px}}
 </style>
 """, unsafe_allow_html=True)
 
-# 수업 자료의 투명 배경 로봇 이미지를 Streamlit 기본 이미지 기능으로 배치합니다.
-# 이미지 주소만 교체하면 조별 제작 이미지도 사용할 수 있습니다.
-AIVLE_IMAGE_URL = "https://raw.githubusercontent.com/Jangrae/img/master/ai_robot.png"
-
-st.markdown('<div class="aivle-eyebrow" style="color:#6279ae;letter-spacing:.15em">AIVLE · PERSONAL WORK ASSISTANT</div>', unsafe_allow_html=True)
-hero_text, hero_robot = st.columns([3.9, 1.1], vertical_alignment="center")
+# 찬우님 버전의 수달 캐릭터 콘셉트를 상단에 도입하고 중복 기능 홍보 띠는 제거합니다.
+hero_text, hero_otter = st.columns([3.7, 1.15], vertical_alignment="center", gap="medium")
 with hero_text:
     st.markdown("""
     <div class="aivle-intro">
-      <div class="aivle-intro-tag">YOUR DAILY WORK PARTNER</div>
-      <h1>안녕하세요,<br><span>김 대리님의 AI 비서</span> AIVLE입니다.</h1>
-      <p>필요한 순간에 질문하고, 회의를 정리하고, 중요한 일을 놓치지 마세요.</p>
+      <div class="aivle-intro-tag">AIVLE · PERSONAL AI ASSISTANT</div>
+      <h1>일을 더 가볍게, 성과는 더 확실하게.<br><span>AI 업무 파트너, 에이블</span></h1>
+      <p>대화부터 회의 정리, 실행할 업무까지.<br>복잡한 일은 에이블과 함께 정리하세요.</p>
     </div>
     """, unsafe_allow_html=True)
-with hero_robot:
-    st.image(AIVLE_IMAGE_URL, use_container_width=True)
+with hero_otter:
+    st.markdown(
+        f'<div class="aivle-otter-card"><img src="{AIVLE_OTTER_DATA}" alt="에이블 수달 캐릭터">'
+        '<div class="aivle-otter-caption">에이블 · AI 업무 파트너</div></div>',
+        unsafe_allow_html=True,
+    )
 
-st.markdown("""
-<div class="aivle-feature-strip">
-  <span>✦ AI 질문과 답변</span>
-  <span>🎙 Whisper-1 음성 인식</span>
-  <span>✉ 이메일 작성과 발송</span>
-  <span>✓ 마감 관리 · 보고서 · 결정 점검</span>
-</div>
-""", unsafe_allow_html=True)
 # 버튼 API 호출은 시간 제한 및 제한된 재시도로 무한 대기를 방지합니다.
 
 # Colab 실행: Colab에서 api_key.txt를 읽어 os.environ에 등록한 뒤 서버를 실행합니다.
@@ -901,7 +929,7 @@ tab_chat, tab_meeting, tab_tasks, tab_decisions, tab_reports, tab_email = st.tab
 
 with tab_chat:
     st.markdown('<div class="aivle-heading">AI와 대화하기</div>', unsafe_allow_html=True)
-    with st.expander("⚙️ 답변 및 음성 설정", expanded=False):
+    with st.expander("답변 · 음성 설정", expanded=False):
         st.selectbox("답변 길이", ["간결", "기본", "상세"], key="answer_style",
                      help="AI 대화의 화면 답변 길이만 조절합니다. 회의 분석의 필수 항목은 유지합니다.")
         st.checkbox("음성 답변 자동 생성", key="enable_tts")
@@ -916,10 +944,10 @@ with tab_chat:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
-    with st.expander("🎙️ 음성으로 질문하기 / STT 확인", expanded=False):
+    with st.expander("음성 질문 · 텍스트 확인", expanded=False):
         chat_audio = st.audio_input("질문을 녹음하세요", key="chat_microphone")
         chat_upload = st.file_uploader(
-            "또는 녹음 파일 업로드", type=["mp3", "wav", "m4a", "mp4", "webm"], key="chat_upload"
+            "녹음 파일 선택 (mp3, wav, m4a 등)", type=["mp3", "wav", "m4a", "mp4", "webm"], key="chat_upload"
         )
         selected = chat_audio or chat_upload
         if st.button("1. Whisper-1 음성 인식", disabled=selected is None):
@@ -966,7 +994,7 @@ with tab_chat:
 with tab_meeting:
     st.markdown('<div class="aivle-heading">회의에서 실행할 업무까지</div>', unsafe_allow_html=True)
     st.markdown('<div class="aivle-hint">회의록을 올리거나 녹음한 뒤 STT를 확인하고 분석을 시작하세요.</div>', unsafe_allow_html=True)
-    txt = st.file_uploader("회의록 TXT 업로드 (음성 없이 바로 분석 가능)", type=["txt"], key="meeting_txt")
+    txt = st.file_uploader("회의록 텍스트 파일 (TXT)", type=["txt"], key="meeting_txt")
     if txt is not None:
         try:
             raw = txt.getvalue()
@@ -979,7 +1007,7 @@ with tab_meeting:
 
     mode = st.radio("회의 음성 입력", ["마이크 녹음", "녹음 파일 업로드"], horizontal=True)
     audio = st.audio_input("회의 녹음", key="meeting_microphone") if mode == "마이크 녹음" else st.file_uploader(
-        "회의 녹음 파일", type=["mp3", "wav", "m4a", "mp4", "webm"], key="meeting_upload"
+        "회의 음성 파일 선택", type=["mp3", "wav", "m4a", "mp4", "webm"], key="meeting_upload"
     )
     if audio is not None:
         st.audio(audio)

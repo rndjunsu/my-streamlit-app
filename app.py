@@ -95,7 +95,8 @@ def get_llm():
     )
 
 # 5. 기존 ChromaDB 연결
-@st.cache_resource(show_spinner=False)
+# Chroma 컬렉션은 재생성될 수 있으므로 DB 핸들은 Streamlit 리소스 캐시에 보관하지 않습니다.
+# 임베딩/LLM 캐시는 유지합니다.
 def get_default_db():
     if not os.path.isdir("chroma_db"):
         return None
@@ -130,37 +131,48 @@ def get_default_db():
     return db
 
 # 6. PDF RAG 파이프라인
-@st.cache_resource(show_spinner=False)
+# filepath 입력 및 반환 타입(Chroma)은 기존과 같습니다.
+# 컬렉션이 유실된 캐시 객체를 재사용하지 않도록 DB 핸들은 캐시하지 않습니다.
 def rag_pipeline(filepath):
     """PDF 파일 경로(filepath)를 받아 Chroma 벡터DB를 반환합니다."""
     filepath = Path(filepath)
+    if not filepath.is_file():
+        raise FileNotFoundError(f"PDF 파일을 찾을 수 없습니다: {filepath}")
 
-    # 파일 경로를 기반으로 PDF 내용 추출
+    file_hash = hashlib.sha256(filepath.read_bytes()).hexdigest()
+    collection_name = "pdf_" + file_hash[:24]
+
+    # 문서별 DB 디렉터리를 분리합니다. Streamlit 재실행에서는 기존 인덱스를 재사용하고,
+    # 앱 인스턴스 재시작으로 임시 폴더가 지워지면 새 인덱스를 생성합니다.
+    # 청크 설정이 바뀐 과거 인덱스를 재사용하지 않도록 설정명을 경로에 포함합니다.
+    db_dir = Path(tempfile.gettempdir()) / "aivle_rag_chroma" / file_hash / "chunk_500_overlap_100"
+    db_dir.mkdir(parents=True, exist_ok=True)
+
+    db = Chroma(
+        collection_name=collection_name,
+        embedding_function=get_embeddings(),
+        persist_directory=str(db_dir)
+    )
+
+    # Chroma는 현재 컬렉션 ID를 다시 조회합니다. 예전 컬렉션 객체를 캐시하지 않습니다.
+    if db._collection.count() > 0:
+        return db
+
+    # 신규 파일인 경우에만 문서 읽기/임베딩 수행 (기존 청크 설정 유지)
     docs = PyMuPDF4LLMLoader(str(filepath)).load()
-
-    # 기존 청크 분할 설정 유지
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
         chunk_overlap=100
     )
     chunks = splitter.split_documents(docs)
-
     if not chunks:
         raise ValueError("PDF에서 텍스트를 추출하지 못했습니다.")
 
-    # 출처에는 업로드 시의 PDF 이름을 저장
     for chunk in chunks:
         chunk.metadata["source"] = filepath.name
 
-    # 기존 컬렉션 식별 방식 유지: 내용의 SHA256 사용
-    file_hash = hashlib.sha256(filepath.read_bytes()).hexdigest()
-    db = Chroma(
-        collection_name="pdf_" + file_hash[:24],
-        embedding_function=get_embeddings()
-    )
     db.add_documents(chunks)
     return db
-
 
 
 # ==================================================

@@ -52,7 +52,7 @@ def render_followup_questions(messages):
 
     # Document 객체(docs)는 JSON 직렬화할 수 없으므로 역할과 본문만 서명에 사용
     last_pair = [
-        {"role": m.get("role"), "content": m.get("content", "")}
+        {"role": str(m.get("role", "")), "content": str(m.get("content", ""))}
         for m in messages[-2:]
     ]
     signature_text = json.dumps(

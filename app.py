@@ -10,6 +10,7 @@ import logging
 import math
 import hashlib
 import tempfile
+from pathlib import Path
 from collections import Counter
 
 import streamlit as st
@@ -23,6 +24,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+
+LOGO_PATH = Path(__file__).resolve().parent / "assets" / "ai_study_helper_banner.png"
 
 # 1. Streamlit 페이지 설정
 st.set_page_config(
@@ -509,9 +512,10 @@ def show_sources(docs):
 # 1. 사이드바 메뉴
 with st.sidebar:
 
-    st.caption("AIVLE SCHOOL / DIGITAL WHITEPAPER")
-    st.title("에이블 백서")
-    st.caption("AI · DX Learning Knowledge Base")
+    if LOGO_PATH.is_file():
+        st.image(str(LOGO_PATH), use_container_width=True)
+    else:
+        st.title("AI 학습 도우미")
 
     st.divider()
 
@@ -588,8 +592,10 @@ st.session_state.pdf_hash = doc_id
 
 
 # 4. 메인 화면
-st.caption("AIVLE SCHOOL / DIGITAL WHITEPAPER")
-st.title("에이블 백서")
+if LOGO_PATH.is_file():
+    st.image(str(LOGO_PATH), width=700)
+else:
+    st.title("AI 학습 도우미")
 st.write(
     "교육과정과 프로젝트 경험을 연결하는 AI 지식 플랫폼. "
     "백서 기반 답변과 맞춤형 학습 방향을 제공합니다."
@@ -630,7 +636,7 @@ if db is None:
 
 if menu == "지식 어시스턴트":
 
-    st.subheader("백서 AI 어시스턴트")
+    st.subheader("AI 학습 도우미")
     st.caption("백서에 근거한 답변과 참고 문서를 제공합니다.")
 
     # 기존 대화 출력

@@ -140,8 +140,8 @@ def rag_pipeline(filepath):
 
     # 기존 청크 분할 설정 유지
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=900,
-        chunk_overlap=160
+        chunk_size=500,
+        chunk_overlap=100
     )
     chunks = splitter.split_documents(docs)
 
@@ -510,8 +510,7 @@ with st.sidebar:
             "지식 어시스턴트",
             "학습 로드맵",
             "백서 탐색",
-            "빅프로젝트 플래너",
-            "백서 잘라 보기"
+            "빅프로젝트 플래너"
         ]
     )
 
@@ -667,7 +666,10 @@ if menu == "지식 어시스턴트":
                     st.rerun()
 
     # 사용자 질문 입력
-    question = st.chat_input("백서에 대해 질문하세요.")
+    question = st.chat_input("질문하세요.")
+
+    if question:
+      st.toast(f"질문 입력 확인: {question}")
 
     if st.session_state.get("pending_question"):
         question = st.session_state.pop("pending_question")

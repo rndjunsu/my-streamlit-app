@@ -131,50 +131,35 @@ def get_default_db():
 
 # 6. PDF RAG 파이프라인
 @st.cache_resource(show_spinner=False)
-def rag_pipeline(file_bytes, filename):
+def rag_pipeline(filepath):
+    """PDF 파일 경로(filepath)를 받아 Chroma 벡터DB를 반환합니다."""
+    filepath = Path(filepath)
 
-    # PDF 임시 저장
-    with tempfile.NamedTemporaryFile(
-        suffix=".pdf",
-        delete=False
-    ) as temp:
-        temp.write(file_bytes)
-        path = temp.name
+    # 파일 경로를 기반으로 PDF 내용 추출
+    docs = PyMuPDF4LLMLoader(str(filepath)).load()
 
-    try:
-        # PDF 내용 추출
-        docs = PyMuPDF4LLMLoader(path).load()
+    # 기존 청크 분할 설정 유지
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=900,
+        chunk_overlap=160
+    )
+    chunks = splitter.split_documents(docs)
 
-        # 문서를 검색하기 좋은 크기로 분할
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=900,
-            chunk_overlap=160
-        )
-        chunks = splitter.split_documents(docs)
+    if not chunks:
+        raise ValueError("PDF에서 텍스트를 추출하지 못했습니다.")
 
-        if not chunks:
-            raise ValueError("PDF에서 텍스트를 추출하지 못했습니다.")
+    # 출처에는 업로드 시의 PDF 이름을 저장
+    for chunk in chunks:
+        chunk.metadata["source"] = filepath.name
 
-        # 출처 정보 저장
-        for chunk in chunks:
-            chunk.metadata["source"] = filename
-
-        # 파일별 벡터DB 생성
-        file_hash = hashlib.sha256(file_bytes).hexdigest()
-
-        db = Chroma(
-            collection_name="pdf_" + file_hash[:24],
-            embedding_function=get_embeddings()
-        )
-
-        db.add_documents(chunks)
-
-        return db
-
-    finally:
-        os.remove(path)
-
-
+    # 기존 컬렉션 식별 방식 유지: 내용의 SHA256 사용
+    file_hash = hashlib.sha256(filepath.read_bytes()).hexdigest()
+    db = Chroma(
+        collection_name="pdf_" + file_hash[:24],
+        embedding_function=get_embeddings()
+    )
+    db.add_documents(chunks)
+    return db
 
 
 
@@ -554,11 +539,18 @@ with st.sidebar:
 try:
     if uploaded is not None:
 
+        # Streamlit 업로드 파일을 디스크에 저장해 파일 경로로 전달
         content = uploaded.getvalue()
         doc_id = hashlib.sha256(content).hexdigest()
+        safe_name = uploaded.name.replace("\\", "/").split("/")[-1]
+        upload_dir = Path(tempfile.gettempdir()) / "aivle_rag_uploads" / doc_id
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        filepath = upload_dir / safe_name
+        if not filepath.is_file():
+            filepath.write_bytes(content)
 
         with st.spinner("백서 분석 중..."):
-            db = rag_pipeline(content, uploaded.name)
+            db = rag_pipeline(filepath)
 
         doc_name = uploaded.name
 

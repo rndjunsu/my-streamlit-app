@@ -15,7 +15,7 @@ from aivle_whitepaper_baseline_rag import rag_pipeline
 st.set_page_config(page_title="AIVLE School 학습 도우미", page_icon="📘")
 
 APP_DIR = Path(__file__).resolve().parent
-BASE_PDF = APP_DIR / "AIVLE School 백서_개정본(2).pdf"
+BASE_PDF = APP_DIR / "AIVLE School 백서.pdf"
 UPLOAD_DIR = APP_DIR / ".uploaded_pdfs"
 DB_DIR = APP_DIR / "aivle_chroma_baseline"
 

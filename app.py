@@ -70,19 +70,7 @@ h1, h2, h3 {
 </style>
 """, unsafe_allow_html=True)
 
-# 3. OpenAI API 키 설정
-try:
-    API_KEY = st.secrets["OPENAI_API_KEY"]
-except (KeyError, FileNotFoundError):
-    API_KEY = os.getenv("OPENAI_API_KEY")
-
-if not API_KEY:
-    st.error("Streamlit Secrets에 OPENAI_API_KEY를 등록하세요.")
-    st.stop()
-
-os.environ["OPENAI_API_KEY"] = API_KEY
-
-# 4. 임베딩 모델과 LLM 생성
+# 3. 임베딩 모델과 LLM 생성
 @st.cache_resource(show_spinner=False)
 def get_embeddings():
     return OpenAIEmbeddings(model="text-embedding-3-small")
@@ -94,7 +82,7 @@ def get_llm():
         temperature=0
     )
 
-# 5. 기존 ChromaDB 연결
+# 4. 기존 ChromaDB 연결
 # Chroma 컬렉션은 재생성될 수 있으므로 DB 핸들은 Streamlit 리소스 캐시에 보관하지 않습니다.
 # 임베딩/LLM 캐시는 유지합니다.
 def get_default_db():
@@ -130,7 +118,7 @@ def get_default_db():
         st.warning("기본 DB의 버전 정보가 없습니다. Colab의 DB 생성 셀부터 재실행 후 배포해 주세요.")
     return db
 
-# 6. PDF RAG 파이프라인
+# 5. PDF RAG 파이프라인
 # filepath 입력 및 반환 타입(Chroma)은 기존과 같습니다.
 # 컬렉션이 유실된 캐시 객체를 재사용하지 않도록 DB 핸들은 캐시하지 않습니다.
 def rag_pipeline(filepath):

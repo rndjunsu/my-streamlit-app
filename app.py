@@ -6,6 +6,7 @@
 import os
 import re
 import json
+import logging
 import math
 import hashlib
 import tempfile
@@ -102,7 +103,28 @@ def get_default_db():
         persist_directory="chroma_db"
     )
 
-    return db if db._collection.count() > 0 else None
+    count = db._collection.count()
+    if count <= 0:
+        return None
+
+    # 기본 PDF와 DB가 동일한 문서에서 생성되었는지 검증
+    manifest_path = "chroma_manifest.json"
+    pdf_path = "AIVLE School 백서.pdf"
+    if os.path.isfile(manifest_path):
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        if manifest.get("collection") != "aivle_docs" or manifest.get("chunk_count") != count:
+            raise ValueError("기본 벡터DB와 백서 인덱스 정보가 일치하지 않습니다. Colab에서 DB를 재생성해 주세요.")
+        if os.path.isfile(pdf_path):
+            with open(pdf_path, "rb") as f:
+                actual_hash = hashlib.sha256(f.read()).hexdigest()
+            if actual_hash != manifest.get("pdf_sha256"):
+                raise ValueError("기본 PDF와 벡터DB의 원본 버전이 다릅니다. 백서와 DB를 함께 배포해 주세요.")
+        else:
+            st.warning("기본 백서 PDF 원문이 없어 DB의 원본 파일 버전을 직접 검증할 수 없습니다.")
+    else:
+        st.warning("기본 DB의 버전 정보가 없습니다. Colab의 DB 생성 셀부터 재실행 후 배포해 주세요.")
+    return db
 
 # 6. PDF RAG 파이프라인
 @st.cache_resource(show_spinner=False)
@@ -364,12 +386,12 @@ def rerank_documents(query, candidates):
         )
 
         if not match:
-            return candidates[:4]
+            return []  # 유효한 관련성 판정이 없으면 근거 없는 답변 생성을 막음
 
         ids = json.loads(match.group(0)).get("ids", [])
 
         if not isinstance(ids, list):
-            return candidates[:4]
+            return []
 
         valid_ids = []
 
@@ -384,7 +406,8 @@ def rerank_documents(query, candidates):
         return [candidates[i] for i in valid_ids[:4]]
 
     except Exception:
-        return candidates[:4]
+        logging.exception("문서 리랭킹 실패")
+        return []  # 오류를 성공한 관련성 판단으로 취급하지 않음
 
 
 # 7. 시스템 프롬프트: 환각 방지 및 근거 중심 답변
@@ -551,9 +574,17 @@ if st.session_state.get("doc_id") != doc_id:
     st.session_state.messages = []
     st.session_state.pop("roadmap_result", None)
     st.session_state.pop("explore_result", None)
+    st.session_state.pop("big_plan_answer", None)
+    st.session_state.pop("big_plan_pdf", None)
+    st.session_state.pop("followups", None)
+    st.session_state.pop("followups_for", None)
+    st.session_state.pop("pending_question", None)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+# 모든 메뉴에서 문서 식별자가 동일하도록 유지 (플래너/추천 질문 공용)
+st.session_state.pdf_hash = doc_id
 
 
 # 4. 메인 화면

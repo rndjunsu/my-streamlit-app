@@ -871,39 +871,3 @@ elif menu == "빅프로젝트 플래너":
     # 기존 플래너는 rag_chain.invoke({"input": ...}) 인터페이스 사용
     st.session_state.pdf_hash = doc_id
     render_big_project_planner(_PlannerRAG())
-
-
-# ==================================================
-# 기능 E. 백서 페이지별 열람과 잘라 보기
-# ==================================================
-elif menu == "백서 잘라 보기":
-    st.subheader("백서 잘라 보기")
-    st.caption("원본 백서의 페이지 범위를 선택하여 확인하거나 PDF로 다운로드할 수 있습니다.")
-
-    pdf_data = None
-    if uploaded is not None:
-        pdf_data = uploaded.getvalue()
-    elif os.path.isfile("AIVLE School 백서.pdf"):
-        with open("AIVLE School 백서.pdf", "rb") as f:
-            pdf_data = f.read()
-
-    if pdf_data is None:
-        st.info("백서 원문을 자르려면 왼쪽에서 PDF 파일을 업로드하세요. 기존 ChromaDB만으로는 PDF 페이지를 재생성할 수 없습니다.")
-    else:
-        pdf = pymupdf.open(stream=pdf_data, filetype="pdf")
-        try:
-            total = len(pdf)
-            start, end = st.slider("페이지 선택", 1, total, (1, total)) if total > 1 else (1, 1)
-            if total > 0:
-                with st.expander("선택 구간 텍스트 미리보기", expanded=True):
-                    for p in range(start - 1, min(end, start + 4)):
-                        st.markdown(f"**{p + 1}페이지**")
-                        st.text(pdf[p].get_text()[:3500] or "텍스트가 없는 이미지 페이지입니다.")
-                out_pdf = pymupdf.open()
-                out_pdf.insert_pdf(pdf, from_page=start - 1, to_page=end - 1)
-                output_bytes = out_pdf.tobytes()
-                out_pdf.close()
-                st.download_button("선택한 페이지 PDF 다운로드", output_bytes,
-                                   file_name=f"AIVLE_백서_{start}-{end}페이지.pdf", mime="application/pdf")
-        finally:
-            pdf.close()
